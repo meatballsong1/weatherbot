@@ -882,7 +882,7 @@ class BehaviorModal(discord.ui.Modal, title="Behavior Settings"):
     style       = discord.ui.TextInput(label="Embed style (rich / compact / minimal)", placeholder="rich")
     show_areas  = discord.ui.TextInput(label="Show affected areas? (true/false)", placeholder="true")
     show_expiry = discord.ui.TextInput(label="Show expiry time? (true/false)", placeholder="true")
-    all_clear   = discord.ui.TextInput(label="Post all-clear when alert expires? (true/false)", placeholder="true")
+    all_clear   = discord.ui.TextInput(label="Post all-clear on expiry? (true/false)", placeholder="true")
 
     def __init__(self):
         super().__init__()
@@ -1249,6 +1249,7 @@ TEST_EVENTS = {
     event="Type of alert to test",
     silent="If true, no [TEST] label — looks completely real (default: False)",
     ping_override="Override ping: 'everyone', 'role', 'none', or a specific count like '5'",
+    send_sms="Also send a real SMS text to your configured number (default: False)",
 )
 @app_commands.choices(event=[
     app_commands.Choice(name="🚨 Tornado Emergency (full @everyone spam)", value="tornado_emergency"),
@@ -1263,6 +1264,7 @@ async def cmd_test(
     event: str = "tornado_warning",
     silent: bool = False,
     ping_override: str = "",
+    send_sms: bool = False,
 ):
     ch_id = cfg.get("alert_channel_id", 0)
     if not ch_id:
@@ -1340,6 +1342,11 @@ async def cmd_test(
     try:
         await ch.send(content=ping_str or None, embed=emb)
         log.info(f"Test alert sent: {event_name} to #{ch.name} | silent={silent} | ping={ping_str or 'none'}")
+
+        # Optionally fire real SMS
+        if send_sms:
+            await send_sms_alert(event_name, tdata["headline"], tdata["areaDesc"])
+            log.info(f"Test SMS fired for {event_name}")
     except Exception as e:
         await interaction.followup.send(f"❌ Failed to send: {e}", ephemeral=True)
         return
