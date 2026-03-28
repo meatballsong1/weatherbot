@@ -632,16 +632,19 @@ class SettingsView(discord.ui.View):
 
 # ── Modals ────────────────────────────────────────────────────────────────────
 class StationModal(discord.ui.Modal, title="Station & Location Settings"):
-    station = discord.ui.TextInput(label="NWS Station ID", placeholder="OAX", max_length=4,
-                                   default=cfg.get("station","OAX"))
-    zone    = discord.ui.TextInput(label="NWS Zone (e.g. NEZ040)", placeholder="NEZ040", max_length=10,
-                                   default=cfg.get("zone","NEZ040"))
-    state   = discord.ui.TextInput(label="State (2-letter)", placeholder="NE", max_length=2,
-                                   default=cfg.get("state","NE"))
-    lat     = discord.ui.TextInput(label="Latitude", placeholder="41.26",
-                                   default=str(cfg.get("lat",41.26)))
-    lon     = discord.ui.TextInput(label="Longitude", placeholder="-96.01",
-                                   default=str(cfg.get("lon",-96.01)))
+    station = discord.ui.TextInput(label="NWS Station ID", placeholder="OAX", max_length=4)
+    zone    = discord.ui.TextInput(label="NWS Zone (e.g. NEZ040)", placeholder="NEZ040", max_length=10)
+    state   = discord.ui.TextInput(label="State (2-letter)", placeholder="NE", max_length=2)
+    lat     = discord.ui.TextInput(label="Latitude", placeholder="41.26")
+    lon     = discord.ui.TextInput(label="Longitude", placeholder="-96.01")
+
+    def __init__(self):
+        super().__init__()
+        self.station.default = cfg.get("station", "OAX")
+        self.zone.default    = cfg.get("zone", "NEZ040")
+        self.state.default   = cfg.get("state", "NE")
+        self.lat.default     = str(cfg.get("lat", 41.26))
+        self.lon.default     = str(cfg.get("lon", -96.01))
 
     async def on_submit(self, interaction: discord.Interaction):
         cfg["station"] = self.station.value.upper().strip()
@@ -657,14 +660,17 @@ class StationModal(discord.ui.Modal, title="Station & Location Settings"):
             ephemeral=True)
 
 class ChannelsModal(discord.ui.Modal, title="Discord Channel & Role Settings"):
-    alert_ch   = discord.ui.TextInput(label="Alert Channel ID", placeholder="123456789012345678",
-                                      default=str(cfg.get("alert_channel_id",0)) if cfg.get("alert_channel_id") else "")
-    product_ch = discord.ui.TextInput(label="Products Channel ID", placeholder="123456789012345678",
-                                      default=str(cfg.get("product_channel_id",0)) if cfg.get("product_channel_id") else "")
-    role_id    = discord.ui.TextInput(label="Ping Role ID (for significant alerts)", placeholder="123456789012345678", required=False,
-                                      default=str(cfg.get("ping_role_id",0)) if cfg.get("ping_role_id") else "")
-    poll_iv    = discord.ui.TextInput(label="Poll Interval (seconds, min 30)", placeholder="60",
-                                      default=str(cfg.get("poll_interval_secs",60)))
+    alert_ch   = discord.ui.TextInput(label="Alert Channel ID", placeholder="123456789012345678")
+    product_ch = discord.ui.TextInput(label="Products Channel ID", placeholder="123456789012345678")
+    role_id    = discord.ui.TextInput(label="Ping Role ID (for significant alerts)", placeholder="123456789012345678", required=False)
+    poll_iv    = discord.ui.TextInput(label="Poll Interval (seconds, min 30)", placeholder="60")
+
+    def __init__(self):
+        super().__init__()
+        self.alert_ch.default   = str(cfg.get("alert_channel_id", "")) if cfg.get("alert_channel_id") else ""
+        self.product_ch.default = str(cfg.get("product_channel_id", "")) if cfg.get("product_channel_id") else ""
+        self.role_id.default    = str(cfg.get("ping_role_id", "")) if cfg.get("ping_role_id") else ""
+        self.poll_iv.default    = str(cfg.get("poll_interval_secs", 60))
 
     async def on_submit(self, interaction: discord.Interaction):
         try:    cfg["alert_channel_id"]   = int(self.alert_ch.value.strip())
@@ -679,16 +685,19 @@ class ChannelsModal(discord.ui.Modal, title="Discord Channel & Role Settings"):
         await interaction.response.send_message("✅ Channel settings saved.", ephemeral=True)
 
 class TornadoModal(discord.ui.Modal, title="Tornado Emergency Settings"):
-    count    = discord.ui.TextInput(label="@everyone ping count (per Tornado Emergency)", placeholder="10",
-                                    default=str(cfg.get("tornado_everyone_count",10)))
-    delay    = discord.ui.TextInput(label="Seconds between @everyone pings", placeholder="2",
-                                    default=str(cfg.get("tornado_everyone_delay",2)))
+    count    = discord.ui.TextInput(label="@everyone ping count (per Tornado Emergency)", placeholder="10")
+    delay    = discord.ui.TextInput(label="Seconds between @everyone pings", placeholder="2")
     everyone = discord.ui.TextInput(
         label="Events that trigger @everyone (comma-separated)",
         placeholder="Tornado Emergency, Tornado Warning",
         style=discord.TextStyle.paragraph,
-        default=", ".join(cfg.get("everyone_events",[])),
     )
+
+    def __init__(self):
+        super().__init__()
+        self.count.default    = str(cfg.get("tornado_everyone_count", 10))
+        self.delay.default    = str(cfg.get("tornado_everyone_delay", 2))
+        self.everyone.default = ", ".join(cfg.get("everyone_events", []))
 
     async def on_submit(self, interaction: discord.Interaction):
         try:    cfg["tornado_everyone_count"] = max(1, min(20, int(self.count.value)))
@@ -704,14 +713,17 @@ class TornadoModal(discord.ui.Modal, title="Tornado Emergency Settings"):
         )
 
 class BehaviorModal(discord.ui.Modal, title="Behavior Settings"):
-    style       = discord.ui.TextInput(label="Embed style (rich / compact / minimal)", placeholder="rich",
-                                       default=cfg.get("embed_style","rich"))
-    show_areas  = discord.ui.TextInput(label="Show affected areas? (true/false)", placeholder="true",
-                                       default=str(cfg.get("show_affected_areas",True)).lower())
-    show_expiry = discord.ui.TextInput(label="Show expiry time? (true/false)", placeholder="true",
-                                       default=str(cfg.get("show_expiry",True)).lower())
-    all_clear   = discord.ui.TextInput(label="Post all-clear when alert expires? (true/false)", placeholder="true",
-                                       default=str(cfg.get("post_all_clear",True)).lower())
+    style       = discord.ui.TextInput(label="Embed style (rich / compact / minimal)", placeholder="rich")
+    show_areas  = discord.ui.TextInput(label="Show affected areas? (true/false)", placeholder="true")
+    show_expiry = discord.ui.TextInput(label="Show expiry time? (true/false)", placeholder="true")
+    all_clear   = discord.ui.TextInput(label="Post all-clear when alert expires? (true/false)", placeholder="true")
+
+    def __init__(self):
+        super().__init__()
+        self.style.default       = cfg.get("embed_style", "rich")
+        self.show_areas.default  = str(cfg.get("show_affected_areas", True)).lower()
+        self.show_expiry.default = str(cfg.get("show_expiry", True)).lower()
+        self.all_clear.default   = str(cfg.get("post_all_clear", True)).lower()
 
     async def on_submit(self, interaction: discord.Interaction):
         s = self.style.value.strip().lower()
@@ -999,7 +1011,11 @@ TEST_EVENTS = {
 }
 
 @tree.command(name="test", description="Send a realistic test alert with full ping config applied")
-@app_commands.describe(event="Type of alert to test")
+@app_commands.describe(
+    event="Type of alert to test",
+    silent="If true, no [TEST] label — looks completely real (default: False)",
+    ping_override="Override ping: 'everyone', 'role', 'none', or a specific count like '5'",
+)
 @app_commands.choices(event=[
     app_commands.Choice(name="🚨 Tornado Emergency (full @everyone spam)", value="tornado_emergency"),
     app_commands.Choice(name="🌪️ Tornado Warning",                         value="tornado_warning"),
@@ -1008,7 +1024,12 @@ TEST_EVENTS = {
     app_commands.Choice(name="🔥 Red Flag Warning",                         value="red_flag"),
 ])
 @app_commands.checks.has_permissions(manage_guild=True)
-async def cmd_test(interaction: discord.Interaction, event: str = "tornado_warning"):
+async def cmd_test(
+    interaction: discord.Interaction,
+    event: str = "tornado_warning",
+    silent: bool = False,
+    ping_override: str = "",
+):
     ch_id = cfg.get("alert_channel_id", 0)
     if not ch_id:
         await interaction.response.send_message("❌ No alert channel set — use `/settings` first.", ephemeral=True)
@@ -1020,13 +1041,12 @@ async def cmd_test(interaction: discord.Interaction, event: str = "tornado_warni
 
     await interaction.response.defer(ephemeral=True)
 
-    tdata = TEST_EVENTS.get(event, TEST_EVENTS["tornado_warning"])
+    tdata      = TEST_EVENTS.get(event, TEST_EVENTS["tornado_warning"])
     event_name = tdata["event"]
 
-    # Build realistic fake alert object
     fake_alert = {
         "properties": {
-            "id": f"TEST_{event.upper()}_{int(datetime.now(timezone.utc).timestamp())}",
+            "id":          f"TEST_{event.upper()}_{int(datetime.now(timezone.utc).timestamp())}",
             "event":       event_name,
             "headline":    tdata["headline"],
             "description": tdata["description"],
@@ -1042,47 +1062,76 @@ async def cmd_test(interaction: discord.Interaction, event: str = "tornado_warni
     }
 
     emb = build_alert_embed(fake_alert)
-    # Subtle test marker in footer only
-    emb.set_footer(text=f"⚠️ TEST ALERT · {tdata['senderName']} · WeatherWatch")
+    if not silent:
+        emb.set_footer(text=f"⚠️ TEST ALERT · {tdata['senderName']} · WeatherWatch")
+    else:
+        emb.set_footer(text=f"{tdata['senderName']} · WeatherWatch")
 
-    # Apply real ping config — same logic as live alerts
+    # ── Resolve ping ──────────────────────────────────────────────────────────
+    # ping_override: "everyone", "role", "none", or a number like "3" (repeat count)
     is_everyone_event = event_name in cfg.get("everyone_events", [])
-    role_id  = cfg.get("ping_role_id", 0)
-    ping_str = ""
-    if is_everyone_event:
-        ping_str = "@everyone"
-    elif role_id:
-        ping_str = f"<@&{role_id}>"
+    role_id   = cfg.get("ping_role_id", 0)
+    po        = ping_override.strip().lower() if ping_override else ""
+
+    if po == "none":
+        ping_str       = ""
+        do_everyone    = False
+        override_count = 0
+    elif po == "everyone":
+        ping_str       = "@everyone"
+        do_everyone    = True
+        override_count = cfg.get("tornado_everyone_count", 10)
+    elif po == "role":
+        ping_str       = f"<@&{role_id}>" if role_id else "@everyone"
+        do_everyone    = False
+        override_count = 0
+    elif po.isdigit():
+        # Numeric — treat as custom @everyone repeat count
+        ping_str       = "@everyone"
+        do_everyone    = True
+        override_count = max(1, min(20, int(po)))
+    else:
+        # Default: use saved config
+        if is_everyone_event:
+            ping_str    = "@everyone"
+            do_everyone = True
+        elif role_id:
+            ping_str    = f"<@&{role_id}>"
+            do_everyone = False
+        else:
+            ping_str    = ""
+            do_everyone = False
+        override_count = cfg.get("tornado_everyone_count", 10)
 
     try:
         await ch.send(content=ping_str or None, embed=emb)
-        log.info(f"Test alert sent: {event_name} to #{ch.name}")
+        log.info(f"Test alert sent: {event_name} to #{ch.name} | silent={silent} | ping={ping_str or 'none'}")
     except Exception as e:
         await interaction.followup.send(f"❌ Failed to send: {e}", ephemeral=True)
         return
 
-    # Tornado emergency — run the full @everyone spam just like real event
-    if event_name in ("Tornado Emergency", "Tornado Warning") and is_everyone_event:
-        count = cfg.get("tornado_everyone_count", 10)
+    # ── Repeat pings ──────────────────────────────────────────────────────────
+    if do_everyone and override_count > 1:
         delay = cfg.get("tornado_everyone_delay", 2)
         areas = tdata["areaDesc"]
+        label = "" if silent else " `[TEST]`"
         await interaction.followup.send(
-            f"✅ Test sent to <#{ch_id}>. Running **{count}x** @everyone pings with **{delay}s** delay…",
-            ephemeral=True
+            f"✅ Sent to <#{ch_id}>. Running **{override_count}x** @everyone with **{delay}s** delay…",
+            ephemeral=True,
         )
-        for i in range(count - 1):
+        for i in range(override_count - 1):
             await asyncio.sleep(delay)
             try:
                 await ch.send(
-                    f"🚨 **{event_name.upper()}** 🚨 @everyone — {areas[:100]} ({i+2}/{count}) `[TEST]`"
+                    f"🚨 **{event_name.upper()}** 🚨 @everyone — {areas[:100]} ({i+2}/{override_count}){label}"
                 )
             except Exception:
                 pass
     else:
-        ping_info = f"Pinged: {ping_str}" if ping_str else "No ping (configure role in `/settings`)"
+        ping_info = f"Pinged: `{ping_str}`" if ping_str else "No ping"
         await interaction.followup.send(
-            f"✅ Test **{event_name}** sent to <#{ch_id}>. {ping_info}",
-            ephemeral=True
+            f"✅ **{event_name}** sent to <#{ch_id}> · {ping_info} · silent={silent}",
+            ephemeral=True,
         )
 
 # ── Error handler ─────────────────────────────────────────────────────────────
