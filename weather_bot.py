@@ -627,34 +627,8 @@ class SettingsView(discord.ui.View):
 
     @discord.ui.button(label="🧪 Test Alert", style=discord.ButtonStyle.secondary, row=1)
     async def btn_test(self, interaction: discord.Interaction, button: discord.ui.Button):
-        ch_id = cfg.get("alert_channel_id", 0)
-        if not ch_id:
-            await interaction.response.send_message("❌ No alert channel set.", ephemeral=True)
-            return
-        ch = bot.get_channel(ch_id)
-        if not ch:
-            await interaction.response.send_message("❌ Can't find that channel.", ephemeral=True)
-            return
-        test_alert = {
-            "properties": {
-                "id": "TEST_ALERT_001",
-                "event": "Tornado Warning",
-                "headline": "TEST ONLY — Tornado Warning in effect until 3:00 PM CDT",
-                "description": "THIS IS A TEST.\n\nA tornado warning has been issued for test purposes. No action is required.",
-                "instruction": "This is a test message from WeatherWatch.",
-                "severity": "Extreme",
-                "urgency": "Immediate",
-                "onset": datetime.now(timezone.utc).isoformat(),
-                "expires": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
-                "areaDesc": "Douglas [NE], Sarpy [NE]",
-                "senderName": "NWS Omaha/Valley NE",
-                "messageType": "Alert",
-            }
-        }
-        emb = build_alert_embed(test_alert)
-        emb.title = "🧪 [TEST] " + (emb.title or "Tornado Warning")
-        await ch.send(embed=emb)
-        await interaction.response.send_message(f"✅ Test alert sent to <#{ch_id}>", ephemeral=True)
+        await interaction.response.send_message(
+            "Use `/test` to send a test alert with full ping config applied.", ephemeral=True)
 
 # ── Modals ────────────────────────────────────────────────────────────────────
 class StationModal(discord.ui.Modal, title="Station & Location Settings"):
@@ -936,6 +910,180 @@ async def cmd_status(interaction: discord.Interaction):
     emb.add_field(name="Products Enabled",value=str(on_products), inline=True)
     emb.add_field(name="Seen Alerts",     value=str(len(cfg["_seen_alerts"])), inline=True)
     await interaction.response.send_message(embed=emb, ephemeral=False)
+
+# ── /test command ─────────────────────────────────────────────────────────────
+TEST_EVENTS = {
+    "tornado_emergency": {
+        "event": "Tornado Emergency",
+        "headline": "TORNADO EMERGENCY — Confirmed large and extremely dangerous tornado near Omaha moving northeast at 45 mph",
+        "description": (
+            "AT 3:47 PM CDT, a TORNADO EMERGENCY has been declared for a large, destructive tornado "
+            "near Omaha. This is an EXTREMELY DANGEROUS AND LIFE-THREATENING SITUATION.\n\n"
+            "TAKE COVER IMMEDIATELY in the lowest level of a sturdy building. Get under something "
+            "sturdy and protect your head. DO NOT wait to see the tornado. Move now.\n\n"
+            "This tornado is producing catastrophic damage. Entire neighborhoods have been destroyed "
+            "along the tornado's path. Flying debris will be deadly to those caught without shelter."
+        ),
+        "instruction": "TAKE SHELTER IMMEDIATELY. Move to the lowest floor of a sturdy building. Avoid windows. Do not attempt to outrun this tornado by vehicle.",
+        "severity": "Extreme",
+        "urgency": "Immediate",
+        "areaDesc": "Douglas [NE], Sarpy [NE], Washington [NE]",
+        "senderName": "NWS Omaha/Valley NE",
+    },
+    "tornado_warning": {
+        "event": "Tornado Warning",
+        "headline": "Tornado Warning issued for Douglas County until 4:15 PM CDT",
+        "description": (
+            "AT 3:52 PM CDT, a severe thunderstorm capable of producing a tornado was located "
+            "near Elkhorn, moving northeast at 35 mph.\n\n"
+            "HAZARD: Tornado.\nSOURCE: Radar indicated rotation.\n"
+            "IMPACT: Flying debris will be dangerous to those caught without shelter."
+        ),
+        "instruction": "Take cover now in a substantial shelter. If you are outdoors, in a mobile home, or in a vehicle, move to the closest substantial shelter and protect yourself from flying debris.",
+        "severity": "Extreme",
+        "urgency": "Immediate",
+        "areaDesc": "Douglas [NE], Sarpy [NE]",
+        "senderName": "NWS Omaha/Valley NE",
+    },
+    "severe_thunderstorm": {
+        "event": "Severe Thunderstorm Warning",
+        "headline": "Severe Thunderstorm Warning for Douglas County until 4:30 PM CDT",
+        "description": (
+            "AT 3:58 PM CDT, a severe thunderstorm was located near Omaha, moving northeast at 30 mph.\n\n"
+            "HAZARD: Golf ball size hail and 70 mph wind gusts.\n"
+            "SOURCE: Radar indicated.\n"
+            "IMPACT: People and animals outdoors will be injured. Expect hail damage to roofs, "
+            "siding, windows and vehicles. Expect wind damage to roofs, siding, and trees."
+        ),
+        "instruction": "Move to an interior room on the lowest floor of a sturdy building. Avoid windows.",
+        "severity": "Severe",
+        "urgency": "Immediate",
+        "areaDesc": "Douglas [NE], Dodge [NE], Washington [NE]",
+        "senderName": "NWS Omaha/Valley NE",
+    },
+    "flash_flood": {
+        "event": "Flash Flood Warning",
+        "headline": "Flash Flood Warning for Douglas County until 6:00 PM CDT",
+        "description": (
+            "AT 4:02 PM CDT, doppler radar indicated heavy rain due to thunderstorms. "
+            "Flash flooding is ongoing or expected to begin shortly.\n\n"
+            "HAZARD: Life threatening flash flooding. Heavy rain producing flash flooding.\n"
+            "SOURCE: Doppler radar.\n"
+            "IMPACT: Life threatening flash flooding of creeks and streams, urban areas, highways, "
+            "streets and underpasses."
+        ),
+        "instruction": "Turn around, don't drown when encountering flooded roads. Most flood deaths occur in vehicles.",
+        "severity": "Severe",
+        "urgency": "Immediate",
+        "areaDesc": "Douglas [NE], Sarpy [NE]",
+        "senderName": "NWS Omaha/Valley NE",
+    },
+    "red_flag": {
+        "event": "Red Flag Warning",
+        "headline": "Red Flag Warning in effect until 8:00 PM CDT for critical fire weather conditions",
+        "description": (
+            "A Red Flag Warning means that critical fire weather conditions are either occurring "
+            "or will occur shortly. A combination of strong winds, low relative humidity, and warm "
+            "temperatures will create explosive fire growth potential.\n\n"
+            "AFFECTED AREA: Fire weather zone 213 — Eastern Nebraska\n"
+            "WINDS: Southwest 20 to 30 mph with gusts up to 45 mph.\n"
+            "HUMIDITY: 10 to 15 percent.\n"
+            "TEMPERATURES: Mid to upper 80s."
+        ),
+        "instruction": "Avoid outdoor burning. If a fire starts, it will likely spread rapidly. Report fires to local fire authorities immediately.",
+        "severity": "Severe",
+        "urgency": "Expected",
+        "areaDesc": "Antelope [NE], Boone [NE], Burt [NE], Cedar [NE], Colfax [NE]",
+        "senderName": "NWS Omaha/Valley NE",
+    },
+}
+
+@tree.command(name="test", description="Send a realistic test alert with full ping config applied")
+@app_commands.describe(event="Type of alert to test")
+@app_commands.choices(event=[
+    app_commands.Choice(name="🚨 Tornado Emergency (full @everyone spam)", value="tornado_emergency"),
+    app_commands.Choice(name="🌪️ Tornado Warning",                         value="tornado_warning"),
+    app_commands.Choice(name="⛈️ Severe Thunderstorm Warning",              value="severe_thunderstorm"),
+    app_commands.Choice(name="🌊 Flash Flood Warning",                      value="flash_flood"),
+    app_commands.Choice(name="🔥 Red Flag Warning",                         value="red_flag"),
+])
+@app_commands.checks.has_permissions(manage_guild=True)
+async def cmd_test(interaction: discord.Interaction, event: str = "tornado_warning"):
+    ch_id = cfg.get("alert_channel_id", 0)
+    if not ch_id:
+        await interaction.response.send_message("❌ No alert channel set — use `/settings` first.", ephemeral=True)
+        return
+    ch = bot.get_channel(ch_id)
+    if not ch:
+        await interaction.response.send_message("❌ Can't find alert channel. Check the ID in `/settings`.", ephemeral=True)
+        return
+
+    await interaction.response.defer(ephemeral=True)
+
+    tdata = TEST_EVENTS.get(event, TEST_EVENTS["tornado_warning"])
+    event_name = tdata["event"]
+
+    # Build realistic fake alert object
+    fake_alert = {
+        "properties": {
+            "id": f"TEST_{event.upper()}_{int(datetime.now(timezone.utc).timestamp())}",
+            "event":       event_name,
+            "headline":    tdata["headline"],
+            "description": tdata["description"],
+            "instruction": tdata["instruction"],
+            "severity":    tdata["severity"],
+            "urgency":     tdata["urgency"],
+            "onset":       datetime.now(timezone.utc).isoformat(),
+            "expires":     (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
+            "areaDesc":    tdata["areaDesc"],
+            "senderName":  tdata["senderName"],
+            "messageType": "Alert",
+        }
+    }
+
+    emb = build_alert_embed(fake_alert)
+    # Subtle test marker in footer only
+    emb.set_footer(text=f"⚠️ TEST ALERT · {tdata['senderName']} · WeatherWatch")
+
+    # Apply real ping config — same logic as live alerts
+    is_everyone_event = event_name in cfg.get("everyone_events", [])
+    role_id  = cfg.get("ping_role_id", 0)
+    ping_str = ""
+    if is_everyone_event:
+        ping_str = "@everyone"
+    elif role_id:
+        ping_str = f"<@&{role_id}>"
+
+    try:
+        await ch.send(content=ping_str or None, embed=emb)
+        log.info(f"Test alert sent: {event_name} to #{ch.name}")
+    except Exception as e:
+        await interaction.followup.send(f"❌ Failed to send: {e}", ephemeral=True)
+        return
+
+    # Tornado emergency — run the full @everyone spam just like real event
+    if event_name in ("Tornado Emergency", "Tornado Warning") and is_everyone_event:
+        count = cfg.get("tornado_everyone_count", 10)
+        delay = cfg.get("tornado_everyone_delay", 2)
+        areas = tdata["areaDesc"]
+        await interaction.followup.send(
+            f"✅ Test sent to <#{ch_id}>. Running **{count}x** @everyone pings with **{delay}s** delay…",
+            ephemeral=True
+        )
+        for i in range(count - 1):
+            await asyncio.sleep(delay)
+            try:
+                await ch.send(
+                    f"🚨 **{event_name.upper()}** 🚨 @everyone — {areas[:100]} ({i+2}/{count}) `[TEST]`"
+                )
+            except Exception:
+                pass
+    else:
+        ping_info = f"Pinged: {ping_str}" if ping_str else "No ping (configure role in `/settings`)"
+        await interaction.followup.send(
+            f"✅ Test **{event_name}** sent to <#{ch_id}>. {ping_info}",
+            ephemeral=True
+        )
 
 # ── Error handler ─────────────────────────────────────────────────────────────
 @tree.error
