@@ -115,6 +115,33 @@ DEFAULT_CONFIG = {
     "show_expiry":          True,
     "show_source":          True,
 
+    # SMS alerts via email-to-SMS gateway
+    "sms_enabled":        False,
+    "sms_to":             "4027180244@tmomail.net",  # number@carrier_gateway
+    "sms_gmail_address":  "",    # your gmail address
+    "sms_gmail_password": "",    # gmail app password (not your login password)
+    "sms_events": [
+        "Tornado Emergency",
+        "Tornado Warning",
+        "Tornado Watch",
+        "Severe Thunderstorm Warning",
+        "Severe Thunderstorm Watch",
+    ],
+
+    # SMS alerts via email-to-carrier gateway
+    "sms_enabled":    False,
+    "sms_number":     "4027180244",
+    "sms_carrier":    "verizon",       # verizon | att | tmobile | sprint
+    "sms_gmail":      "",              # your gmail address
+    "sms_app_pass":   "",              # gmail app password (not your real password)
+    "sms_events": [
+        "Tornado Emergency",
+        "Tornado Warning",
+        "Tornado Watch",
+        "Severe Thunderstorm Warning",
+        "Severe Thunderstorm Watch",
+    ],
+
     # Seen tracking
     "_seen_alerts":   [],
     "_seen_products": [],
@@ -171,6 +198,59 @@ SEVERITY_EMOJI = {
     "Extreme Heat Warning":        "🥵",
 }
 
+# ── SMS via email-to-carrier gateway ─────────────────────────────────────────
+CARRIER_GATEWAYS = {
+    "verizon":  "@vtext.com",
+    "att":      "@txt.att.net",
+    "tmobile":  "@tmomail.net",
+    "sprint":   "@messaging.sprintpcs.com",
+    "boost":    "@sms.myboostmobile.com",
+    "cricket":  "@sms.cricketwireless.net",
+    "metro":    "@mymetropcs.com",
+    "uscellular":"@email.uscc.net",
+}
+
+async def send_sms_alert(event: str, headline: str, areas: str):
+    """Send SMS via email-to-carrier gateway (e.g. number@vtext.com)."""
+    if not cfg.get("sms_enabled"):
+        return
+    if event not in cfg.get("sms_events", []):
+        return
+
+    gmail    = cfg.get("sms_gmail", "").strip()
+    app_pass = cfg.get("sms_app_pass", "").strip()
+    number   = cfg.get("sms_number", "").strip().replace("-","").replace(" ","").replace("+1","")
+    carrier  = cfg.get("sms_carrier", "verizon").lower()
+
+    if not gmail or not app_pass or not number:
+        log.warning("SMS: missing gmail, app_pass, or number in config")
+        return
+
+    gateway = CARRIER_GATEWAYS.get(carrier, "@vtext.com")
+    to_addr = f"{number}{gateway}"
+
+    # Keep SMS short — carrier gateways truncate at 160 chars
+    body = f"{event}\n{headline[:80]}\n{areas[:60]}"
+
+    try:
+        import smtplib
+        from email.mime.text import MIMEText
+        msg = MIMEText(body)
+        msg["From"]    = gmail
+        msg["To"]      = to_addr
+        msg["Subject"] = ""  # subject shows as part of text on some carriers
+
+        loop = asyncio.get_event_loop()
+        def _send():
+            with smtplib.SMTP_SSL("smtp.gmail.com", 465) as s:
+                s.login(gmail, app_pass)
+                s.send_message(msg)
+
+        await loop.run_in_executor(None, _send)
+        log.info(f"SMS sent to {to_addr}: {event}")
+    except Exception as e:
+        log.warning(f"SMS failed: {e}")
+
 # ── Config helpers ────────────────────────────────────────────────────────────
 def load_config() -> dict:
     if CONFIG_FILE.exists():
@@ -195,6 +275,56 @@ def save_config(cfg: dict):
     CONFIG_FILE.write_text(json.dumps(out, indent=2))
 
 cfg = load_config()
+
+
+# ── SMS via email-to-SMS ──────────────────────────────────────────────────────
+# Common carrier gateways:
+#   T-Mobile:  number@tmomail.net
+#   Verizon:   number@vtext.com
+#   AT&T:      number@txt.att.net
+#   Sprint:    number@messaging.sprintpcs.com
+#   US Cellular: number@email.uscc.net
+# Gmail: use an App Password (myaccount.google.com/apppasswords)
+
+import smtplib
+from email.mime.text import MIMEText
+
+async def send_sms_alert(event: str, headline: str, areas: str):
+    """Send SMS via email-to-SMS gateway using Gmail SMTP."""
+    if not cfg.get("sms_enabled"):
+        return
+    if event not in cfg.get("sms_events", []):
+        return
+
+    gmail = cfg.get("sms_gmail_address", "").strip()
+    passw = cfg.get("sms_gmail_password", "").strip()
+    to    = cfg.get("sms_to", "").strip()
+
+    if not gmail or not passw or not to:
+        log.warning("SMS: gmail_address, gmail_password, or sms_to not configured")
+        return
+
+    emoji = {"Tornado Emergency":"🚨","Tornado Warning":"🌪️","Tornado Watch":"⚠️",
+             "Severe Thunderstorm Warning":"⛈️","Severe Thunderstorm Watch":"🌩️"}.get(event, "⚠️")
+
+    body = f"{emoji} {event}\n{headline[:100]}\n{areas[:80]}"
+
+    try:
+        msg = MIMEText(body)
+        msg["From"]    = gmail
+        msg["To"]      = to
+        msg["Subject"] = ""  # SMS gateways ignore subject
+
+        def _send():
+            with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=10) as s:
+                s.login(gmail, passw)
+                s.sendmail(gmail, to, msg.as_string())
+
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, _send)
+        log.info(f"SMS sent: {event} → {to}")
+    except Exception as e:
+        log.warning(f"SMS failed: {e}")
 
 # ── NWS API helpers ───────────────────────────────────────────────────────────
 NWS_BASE = "https://api.weather.gov"
@@ -436,6 +566,13 @@ async def check_alerts(session: aiohttp.ClientSession):
 
         log.info(f"New alert: {event} ({aid})")
 
+        # Send SMS for configured events
+        asyncio.create_task(send_sms_alert(
+            event,
+            props.get("headline", event),
+            props.get("areaDesc", ""),
+        ))
+
         emb = build_alert_embed(alert)
 
         # Build ping string
@@ -452,6 +589,13 @@ async def check_alerts(session: aiohttp.ClientSession):
         except Exception as e:
             log.error(f"Failed to send alert embed: {e}")
             continue
+
+        # SMS notification
+        asyncio.create_task(send_sms_alert(
+            event,
+            props.get("headline", ""),
+            areas,
+        ))
 
         # Tornado emergency — spam @everyone N times
         if event in ("Tornado Emergency", "Tornado Warning") and is_everyone_event:
@@ -581,6 +725,20 @@ class SettingsView(discord.ui.View):
             inline=True,
         )
 
+        # SMS
+        sms_on = cfg.get("sms_enabled", False)
+        carrier = cfg.get("sms_carrier","verizon")
+        gateway = CARRIER_GATEWAYS.get(carrier,"@vtext.com")
+        emb.add_field(
+            name="📱 SMS Alerts",
+            value=(
+                f"**Status:** {'✅ Enabled' if sms_on else '⛔ Disabled'}\n"
+                f"**Number:** `{cfg.get('sms_number','not set')}{gateway}`\n"
+                f"**Events:** {', '.join(cfg.get('sms_events',[]))}"
+            ),
+            inline=False,
+        )
+
         emb.set_footer(text="WeatherWatch · Settings panel — changes save immediately")
         return emb
 
@@ -617,6 +775,14 @@ class SettingsView(discord.ui.View):
     @discord.ui.button(label="⚙️ Behavior", style=discord.ButtonStyle.secondary, row=1)
     async def btn_behavior(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(BehaviorModal())
+
+    @discord.ui.button(label="📱 SMS Alerts", style=discord.ButtonStyle.secondary, row=2)
+    async def btn_sms(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(SmsModal())
+
+    @discord.ui.button(label="📱 SMS Alerts", style=discord.ButtonStyle.secondary, row=2)
+    async def btn_sms(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(SmsModal())
 
     @discord.ui.button(label="🔄 Reset Seen", style=discord.ButtonStyle.danger, row=1)
     async def btn_reset(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -734,6 +900,74 @@ class BehaviorModal(discord.ui.Modal, title="Behavior Settings"):
         cfg["post_all_clear"]      = self.all_clear.value.strip().lower() == "true"
         save_config(cfg)
         await interaction.response.send_message("✅ Behavior settings saved.", ephemeral=True)
+
+class SmsModal(discord.ui.Modal, title="SMS Alert Settings"):
+    enabled  = discord.ui.TextInput(label="Enable SMS? (true/false)", placeholder="false")
+    sms_to   = discord.ui.TextInput(label="Phone gateway (number@carrier.com)", placeholder="4027180244@tmomail.net")
+    gmail    = discord.ui.TextInput(label="Gmail address (sender)", placeholder="you@gmail.com")
+    password = discord.ui.TextInput(label="Gmail App Password", placeholder="xxxx xxxx xxxx xxxx")
+    events   = discord.ui.TextInput(
+        label="Events to SMS (comma-separated)",
+        placeholder="Tornado Emergency, Tornado Warning",
+        style=discord.TextStyle.paragraph,
+    )
+
+    def __init__(self):
+        super().__init__()
+        self.enabled.default  = str(cfg.get("sms_enabled", False)).lower()
+        self.sms_to.default   = cfg.get("sms_to", "4027180244@tmomail.net")
+        self.gmail.default    = cfg.get("sms_gmail_address", "")
+        self.password.default = cfg.get("sms_gmail_password", "")
+        self.events.default   = ", ".join(cfg.get("sms_events", [
+            "Tornado Emergency","Tornado Warning","Tornado Watch",
+            "Severe Thunderstorm Warning","Severe Thunderstorm Watch"
+        ]))
+
+    async def on_submit(self, interaction: discord.Interaction):
+        cfg["sms_enabled"]        = self.enabled.value.strip().lower() == "true"
+        cfg["sms_to"]             = self.sms_to.value.strip()
+        cfg["sms_gmail_address"]  = self.gmail.value.strip()
+        cfg["sms_gmail_password"] = self.password.value.strip()
+        cfg["sms_events"]         = [e.strip() for e in self.events.value.split(",") if e.strip()]
+        save_config(cfg)
+        status = "✅ enabled" if cfg["sms_enabled"] else "⏸️ disabled"
+        await interaction.response.send_message(
+            f"SMS alerts {status} → `{cfg['sms_to']}`\nEvents: {', '.join(cfg['sms_events'])}",
+            ephemeral=True,
+        )
+
+# ── SMS Modal ─────────────────────────────────────────────────────────────────
+class SmsModal(discord.ui.Modal, title="SMS Alert Settings"):
+    enabled    = discord.ui.TextInput(label="Enable SMS? (true/false)", placeholder="false")
+    number     = discord.ui.TextInput(label="Phone number (digits only, no +1)", placeholder="4027180244")
+    carrier    = discord.ui.TextInput(label="Carrier (verizon/att/tmobile/sprint/boost)", placeholder="verizon")
+    gmail      = discord.ui.TextInput(label="Gmail address to send from", placeholder="you@gmail.com")
+    app_pass   = discord.ui.TextInput(label="Gmail App Password (16 chars, no spaces)", placeholder="abcd efgh ijkl mnop")
+
+    def __init__(self):
+        super().__init__()
+        self.enabled.default  = str(cfg.get("sms_enabled", False)).lower()
+        self.number.default   = cfg.get("sms_number", "4027180244")
+        self.carrier.default  = cfg.get("sms_carrier", "verizon")
+        self.gmail.default    = cfg.get("sms_gmail", "")
+        self.app_pass.default = cfg.get("sms_app_pass", "")
+
+    async def on_submit(self, interaction: discord.Interaction):
+        cfg["sms_enabled"]  = self.enabled.value.strip().lower() == "true"
+        cfg["sms_number"]   = self.number.value.strip().replace("-","").replace(" ","").replace("+1","")
+        cfg["sms_carrier"]  = self.carrier.value.strip().lower()
+        cfg["sms_gmail"]    = self.gmail.value.strip()
+        cfg["sms_app_pass"] = self.app_pass.value.strip().replace(" ","")
+        save_config(cfg)
+        status = "✅ SMS enabled" if cfg["sms_enabled"] else "⛔ SMS disabled"
+        gateway = CARRIER_GATEWAYS.get(cfg["sms_carrier"], "@vtext.com")
+        await interaction.response.send_message(
+            f"{status}\n"
+            f"→ `{cfg['sms_number']}{gateway}`\n"
+            f"Events: {', '.join(cfg.get('sms_events', []))}\n"
+            f"⚠️ Make sure you have a Gmail App Password — not your real password.",
+            ephemeral=True,
+        )
 
 # ── Alert toggle select menu ──────────────────────────────────────────────────
 class AlertToggleView(discord.ui.View):
