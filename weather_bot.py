@@ -128,6 +128,9 @@ DEFAULT_CONFIG = {
         "Severe Thunderstorm Warning",
         "Severe Thunderstorm Watch",
     ],
+    # Additional recipients — can be emails or carrier gateways
+    # e.g. ["friend@gmail.com", "5551234567@tmomail.net"]
+    "extra_recipients": [],
 
     # SMS alerts via email-to-carrier gateway
     "sms_enabled":    False,
@@ -148,6 +151,9 @@ DEFAULT_CONFIG = {
         "Severe Thunderstorm Warning",
         "Severe Thunderstorm Watch",
     ],
+    # Additional recipients — can be emails or carrier gateways
+    # e.g. ["friend@gmail.com", "5551234567@tmomail.net"]
+    "extra_recipients": [],
 
     # Seen tracking
     "_seen_alerts":   [],
@@ -213,7 +219,7 @@ SEVERITY_EMOJI = {
 
 # ── SMS via email-to-carrier gateway ─────────────────────────────────────────
 CARRIER_GATEWAYS = {
-    "verizon":  "@vtext.com",
+    "verizon":  "@vzwpix.com",   # MMS gateway — more reliable than @vtext.com
     "att":      "@txt.att.net",
     "tmobile":  "@tmomail.net",
     "sprint":   "@messaging.sprintpcs.com",
@@ -241,7 +247,9 @@ async def send_sms_alert(event: str, headline: str, areas: str):
         return
 
     gateway = CARRIER_GATEWAYS.get(carrier, "@vtext.com")
-    to_addr = f"{number}{gateway}"
+    primary = f"{number}{gateway}"
+    extras  = cfg.get("extra_recipients", [])
+    all_to  = [primary] + [r.strip() for r in extras if r.strip()]
     subject = event[:50]
     body    = f"{event}\n{headline[:80]}\n{areas[:60]}"
 
@@ -253,7 +261,7 @@ async def send_sms_alert(event: str, headline: str, areas: str):
             return
         payload = {
             "sender":      {"name": from_name, "email": from_addr},
-            "to":          [{"email": to_addr}],
+            "to":          [{"email": addr} for addr in all_to],
             "subject":     subject,
             "textContent": body,
         }
@@ -270,7 +278,7 @@ async def send_sms_alert(event: str, headline: str, areas: str):
                     timeout=aiohttp.ClientTimeout(total=10),
                 ) as r:
                     if r.status in (200, 201):
-                        log.info(f"SMS sent via Brevo API to {to_addr}: {event}")
+                        log.info(f"SMS sent via Brevo API to {all_to}: {event}")
                     else:
                         txt = await r.text()
                         log.warning(f"SMS Brevo API error {r.status}: {txt}")
@@ -291,7 +299,7 @@ async def send_sms_alert(event: str, headline: str, areas: str):
             from email.mime.text import MIMEText
             msg            = MIMEText(body)
             msg["From"]    = f"{from_name} <{from_addr}>"
-            msg["To"]      = to_addr
+            msg["To"]      = ", ".join(all_to)
             msg["Subject"] = subject
             loop = asyncio.get_event_loop()
             def _send():
@@ -833,9 +841,17 @@ class SettingsView(discord.ui.View):
     async def btn_sms(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(SmsModal())
 
+    @discord.ui.button(label="📧 Recipients", style=discord.ButtonStyle.secondary, row=2)
+    async def btn_recipients(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(RecipientsModal())
+
     @discord.ui.button(label="📱 SMS Alerts", style=discord.ButtonStyle.secondary, row=2)
     async def btn_sms(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(SmsModal())
+
+    @discord.ui.button(label="📧 Recipients", style=discord.ButtonStyle.secondary, row=2)
+    async def btn_recipients(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(RecipientsModal())
 
     @discord.ui.button(label="🔄 Reset Seen", style=discord.ButtonStyle.danger, row=1)
     async def btn_reset(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -954,6 +970,45 @@ class BehaviorModal(discord.ui.Modal, title="Behavior Settings"):
         save_config(cfg)
         await interaction.response.send_message("✅ Behavior settings saved.", ephemeral=True)
 
+class RecipientsModal(discord.ui.Modal, title="Alert Recipients"):
+    primary   = discord.ui.TextInput(
+        label="Primary number + carrier (number:carrier)",
+        placeholder="4027180244:verizon",
+    )
+    extras    = discord.ui.TextInput(
+        label="Extra recipients (one per line — email or gateway)",
+        placeholder="friend@gmail.com\n5551234567@tmomail.net",
+        style=discord.TextStyle.paragraph,
+        required=False,
+    )
+
+    def __init__(self):
+        super().__init__()
+        num     = cfg.get("sms_number", "4027180244")
+        carrier = cfg.get("sms_carrier", "verizon")
+        self.primary.default = f"{num}:{carrier}"
+        self.extras.default  = "\n".join(cfg.get("extra_recipients", []))
+
+    async def on_submit(self, interaction: discord.Interaction):
+        # Parse primary
+        primary_raw = self.primary.value.strip()
+        if ":" in primary_raw:
+            num, car = primary_raw.split(":", 1)
+            cfg["sms_number"]  = num.strip().replace("-","").replace(" ","").replace("+1","")
+            cfg["sms_carrier"] = car.strip().lower()
+        # Parse extras
+        extras = [l.strip() for l in self.extras.value.splitlines() if l.strip()]
+        cfg["extra_recipients"] = extras
+        save_config(cfg)
+        gateway = CARRIER_GATEWAYS.get(cfg["sms_carrier"], "@vtext.com")
+        primary_addr = f"{cfg['sms_number']}{gateway}"
+        all_addrs = [primary_addr] + extras
+        await interaction.response.send_message(
+            f"✅ Recipients saved — **{len(all_addrs)}** total:\n" +
+            "\n".join(f"→ `{a}`" for a in all_addrs),
+            ephemeral=True,
+        )
+
 class SmsModal(discord.ui.Modal, title="SMS Alert Settings"):
     enabled  = discord.ui.TextInput(label="Enable SMS? (true/false)", placeholder="false")
     sms_to   = discord.ui.TextInput(label="Phone gateway (number@carrier.com)", placeholder="4027180244@tmomail.net")
@@ -990,6 +1045,45 @@ class SmsModal(discord.ui.Modal, title="SMS Alert Settings"):
         )
 
 # ── SMS Modal ─────────────────────────────────────────────────────────────────
+class RecipientsModal(discord.ui.Modal, title="Alert Recipients"):
+    primary   = discord.ui.TextInput(
+        label="Primary number + carrier (number:carrier)",
+        placeholder="4027180244:verizon",
+    )
+    extras    = discord.ui.TextInput(
+        label="Extra recipients (one per line — email or gateway)",
+        placeholder="friend@gmail.com\n5551234567@tmomail.net",
+        style=discord.TextStyle.paragraph,
+        required=False,
+    )
+
+    def __init__(self):
+        super().__init__()
+        num     = cfg.get("sms_number", "4027180244")
+        carrier = cfg.get("sms_carrier", "verizon")
+        self.primary.default = f"{num}:{carrier}"
+        self.extras.default  = "\n".join(cfg.get("extra_recipients", []))
+
+    async def on_submit(self, interaction: discord.Interaction):
+        # Parse primary
+        primary_raw = self.primary.value.strip()
+        if ":" in primary_raw:
+            num, car = primary_raw.split(":", 1)
+            cfg["sms_number"]  = num.strip().replace("-","").replace(" ","").replace("+1","")
+            cfg["sms_carrier"] = car.strip().lower()
+        # Parse extras
+        extras = [l.strip() for l in self.extras.value.splitlines() if l.strip()]
+        cfg["extra_recipients"] = extras
+        save_config(cfg)
+        gateway = CARRIER_GATEWAYS.get(cfg["sms_carrier"], "@vtext.com")
+        primary_addr = f"{cfg['sms_number']}{gateway}"
+        all_addrs = [primary_addr] + extras
+        await interaction.response.send_message(
+            f"✅ Recipients saved — **{len(all_addrs)}** total:\n" +
+            "\n".join(f"→ `{a}`" for a in all_addrs),
+            ephemeral=True,
+        )
+
 class SmsModal(discord.ui.Modal, title="SMS Alert Settings"):
     enabled   = discord.ui.TextInput(label="Enable SMS? (true/false)", placeholder="false")
     number    = discord.ui.TextInput(label="Phone number (digits only, no +1)", placeholder="4027180244")
@@ -1194,18 +1288,20 @@ async def cmd_testsms(interaction: discord.Interaction):
     carrier = cfg.get("sms_carrier", "verizon").lower()
     method  = cfg.get("sms_method", "api")
     gateway = CARRIER_GATEWAYS.get(carrier, "@vtext.com")
-    to_addr = f"{number}{gateway}"
-    api_key = cfg.get("sms_api_key", "") or os.getenv("BREVO_API_KEY", "")
+    gateway   = CARRIER_GATEWAYS.get(carrier, "@vtext.com")
+    primary   = f"{number}{gateway}"
+    extras    = cfg.get("extra_recipients", [])
+    all_to    = [primary] + [r.strip() for r in extras if r.strip()]
+    api_key   = cfg.get("sms_api_key", "") or os.getenv("BREVO_API_KEY", "")
     smtp_pass = cfg.get("sms_smtp_pass", "") or os.getenv("BREVO_SMTP_KEY", "")
 
     if not number:
         await interaction.followup.send("❌ No phone number set — use `/settings` → 📱 SMS", ephemeral=True)
         return
 
-    # Show config state before trying
     status_lines = [
-        f"**Number:** `{number}`",
-        f"**Carrier gateway:** `{to_addr}`",
+        f"**Primary:** `{primary}`",
+        f"**Extra recipients:** {', '.join(f'`{r}`' for r in extras) or 'none'}",
         f"**Method:** `{method}`",
         f"**API key:** {'✅ set' if api_key else '❌ missing'}",
         f"**SMTP key:** {'✅ set' if smtp_pass else '❌ missing'}",
@@ -1215,7 +1311,6 @@ async def cmd_testsms(interaction: discord.Interaction):
     ]
     await interaction.followup.send("\n".join(status_lines), ephemeral=True)
 
-    # Force send regardless of sms_enabled flag
     from_addr = cfg.get("sms_from", "weather@oofbomb.xyz")
     from_name = cfg.get("sms_from_name", "weather bot")
     body      = "weather bot test — if you got this, SMS is working!"
@@ -1227,7 +1322,7 @@ async def cmd_testsms(interaction: discord.Interaction):
             return
         payload = {
             "sender":      {"name": from_name, "email": from_addr},
-            "to":          [{"email": to_addr}],
+            "to":          [{"email": addr} for addr in all_to],
             "subject":     subject,
             "textContent": body,
         }
@@ -1270,7 +1365,7 @@ async def cmd_testsms(interaction: discord.Interaction):
             smtp_user = cfg.get("sms_smtp_user", "a664fc001@smtp-brevo.com")
             msg            = MIMEText(body)
             msg["From"]    = f"{from_name} <{from_addr}>"
-            msg["To"]      = to_addr
+            msg["To"]      = ", ".join(all_to)
             msg["Subject"] = subject
             loop = asyncio.get_event_loop()
             def _send():
