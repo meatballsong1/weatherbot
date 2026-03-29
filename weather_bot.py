@@ -972,11 +972,11 @@ class BehaviorModal(discord.ui.Modal, title="Behavior Settings"):
 
 class RecipientsModal(discord.ui.Modal, title="Alert Recipients"):
     primary   = discord.ui.TextInput(
-        label="Primary number + carrier (number:carrier)",
+        label="Primary (number:carrier)",
         placeholder="4027180244:verizon",
     )
     extras    = discord.ui.TextInput(
-        label="Extra recipients (one per line — email or gateway)",
+        label="Extra recipients (one per line)",
         placeholder="friend@gmail.com\n5551234567@tmomail.net",
         style=discord.TextStyle.paragraph,
         required=False,
@@ -1047,11 +1047,11 @@ class SmsModal(discord.ui.Modal, title="SMS Alert Settings"):
 # ── SMS Modal ─────────────────────────────────────────────────────────────────
 class RecipientsModal(discord.ui.Modal, title="Alert Recipients"):
     primary   = discord.ui.TextInput(
-        label="Primary number + carrier (number:carrier)",
+        label="Primary (number:carrier)",
         placeholder="4027180244:verizon",
     )
     extras    = discord.ui.TextInput(
-        label="Extra recipients (one per line — email or gateway)",
+        label="Extra recipients (one per line)",
         placeholder="friend@gmail.com\n5551234567@tmomail.net",
         style=discord.TextStyle.paragraph,
         required=False,
