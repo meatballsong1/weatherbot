@@ -34,6 +34,10 @@ from discord.ext import tasks
 
 # ── Config ────────────────────────────────────────────────────────────────────
 BOT_TOKEN   = os.getenv("WEATHERWATCH_TOKEN", "")
+# Brevo SMTP key can also be set via env instead of /settings
+_brevo_key = os.getenv("BREVO_SMTP_KEY", "")
+if _brevo_key and not DEFAULT_CONFIG.get("sms_smtp_pass"):
+    DEFAULT_CONFIG["sms_smtp_pass"] = _brevo_key
 CONFIG_FILE = Path("weatherwatch_config.json")
 LOG_FILE    = Path("weatherwatch.log")
 
@@ -132,8 +136,11 @@ DEFAULT_CONFIG = {
     "sms_enabled":    False,
     "sms_number":     "4027180244",
     "sms_carrier":    "verizon",       # verizon | att | tmobile | sprint
-    "sms_gmail":      "",              # your gmail address
-    "sms_app_pass":   "",              # gmail app password (not your real password)
+    "sms_from":       "weather@oofbomb.xyz",
+    "sms_smtp_host":  "smtp-relay.brevo.com",
+    "sms_smtp_port":  587,
+    "sms_smtp_user":  "a664fc001@smtp-brevo.com",
+    "sms_smtp_pass":  "",              # set via /settings SMS or .env BREVO_SMTP_KEY
     "sms_events": [
         "Tornado Emergency",
         "Tornado Warning",
@@ -211,43 +218,45 @@ CARRIER_GATEWAYS = {
 }
 
 async def send_sms_alert(event: str, headline: str, areas: str):
-    """Send SMS via email-to-carrier gateway (e.g. number@vtext.com)."""
+    """Send SMS via email-to-carrier gateway using Brevo SMTP."""
     if not cfg.get("sms_enabled"):
         return
     if event not in cfg.get("sms_events", []):
         return
 
-    gmail    = cfg.get("sms_gmail", "").strip()
-    app_pass = cfg.get("sms_app_pass", "").strip()
-    number   = cfg.get("sms_number", "").strip().replace("-","").replace(" ","").replace("+1","")
-    carrier  = cfg.get("sms_carrier", "verizon").lower()
+    number    = cfg.get("sms_number", "").strip().replace("-","").replace(" ","").replace("+1","")
+    carrier   = cfg.get("sms_carrier", "verizon").lower()
+    smtp_host = cfg.get("sms_smtp_host", "smtp-relay.brevo.com")
+    smtp_port = int(cfg.get("sms_smtp_port", 587))
+    smtp_user = cfg.get("sms_smtp_user", "a664fc001@smtp-brevo.com")
+    smtp_pass = cfg.get("sms_smtp_pass", "") or os.getenv("BREVO_SMTP_KEY", "")
+    from_addr = cfg.get("sms_from", "weather@oofbomb.xyz")
 
-    if not gmail or not app_pass or not number:
-        log.warning("SMS: missing gmail, app_pass, or number in config")
+    if not smtp_pass or not number:
+        log.warning("SMS: missing smtp_pass or number in config")
         return
 
     gateway = CARRIER_GATEWAYS.get(carrier, "@vtext.com")
     to_addr = f"{number}{gateway}"
-
-    # Keep SMS short — carrier gateways truncate at 160 chars
-    body = f"{event}\n{headline[:80]}\n{areas[:60]}"
+    body    = f"{event}\n{headline[:80]}\n{areas[:60]}"
 
     try:
         import smtplib
         from email.mime.text import MIMEText
         msg = MIMEText(body)
-        msg["From"]    = gmail
+        msg["From"]    = from_addr
         msg["To"]      = to_addr
-        msg["Subject"] = ""  # subject shows as part of text on some carriers
+        msg["Subject"] = event[:50]
 
         loop = asyncio.get_event_loop()
         def _send():
-            with smtplib.SMTP_SSL("smtp.gmail.com", 465) as s:
-                s.login(gmail, app_pass)
+            with smtplib.SMTP(smtp_host, smtp_port) as s:
+                s.starttls()
+                s.login(smtp_user, smtp_pass)
                 s.send_message(msg)
 
         await loop.run_in_executor(None, _send)
-        log.info(f"SMS sent to {to_addr}: {event}")
+        log.info(f"SMS sent to {to_addr} via {smtp_host}: {event}")
     except Exception as e:
         log.warning(f"SMS failed: {e}")
 
@@ -938,34 +947,34 @@ class SmsModal(discord.ui.Modal, title="SMS Alert Settings"):
 
 # ── SMS Modal ─────────────────────────────────────────────────────────────────
 class SmsModal(discord.ui.Modal, title="SMS Alert Settings"):
-    enabled    = discord.ui.TextInput(label="Enable SMS? (true/false)", placeholder="false")
-    number     = discord.ui.TextInput(label="Phone number (digits only, no +1)", placeholder="4027180244")
-    carrier    = discord.ui.TextInput(label="Carrier (verizon/att/tmobile/sprint/boost)", placeholder="verizon")
-    gmail      = discord.ui.TextInput(label="Gmail address to send from", placeholder="you@gmail.com")
-    app_pass   = discord.ui.TextInput(label="Gmail App Password (16 chars, no spaces)", placeholder="abcd efgh ijkl mnop")
+    enabled   = discord.ui.TextInput(label="Enable SMS? (true/false)", placeholder="false")
+    number    = discord.ui.TextInput(label="Phone number (digits only, no +1)", placeholder="4027180244")
+    carrier   = discord.ui.TextInput(label="Carrier (verizon/att/tmobile/sprint/boost)", placeholder="verizon")
+    smtp_pass = discord.ui.TextInput(label="Brevo SMTP Key", placeholder="xsmtpsib-...")
+    from_addr = discord.ui.TextInput(label="From address", placeholder="weather@oofbomb.xyz")
 
     def __init__(self):
         super().__init__()
-        self.enabled.default  = str(cfg.get("sms_enabled", False)).lower()
-        self.number.default   = cfg.get("sms_number", "4027180244")
-        self.carrier.default  = cfg.get("sms_carrier", "verizon")
-        self.gmail.default    = cfg.get("sms_gmail", "")
-        self.app_pass.default = cfg.get("sms_app_pass", "")
+        self.enabled.default   = str(cfg.get("sms_enabled", False)).lower()
+        self.number.default    = cfg.get("sms_number", "4027180244")
+        self.carrier.default   = cfg.get("sms_carrier", "verizon")
+        self.smtp_pass.default = cfg.get("sms_smtp_pass", "")
+        self.from_addr.default = cfg.get("sms_from", "weather@oofbomb.xyz")
 
     async def on_submit(self, interaction: discord.Interaction):
-        cfg["sms_enabled"]  = self.enabled.value.strip().lower() == "true"
-        cfg["sms_number"]   = self.number.value.strip().replace("-","").replace(" ","").replace("+1","")
-        cfg["sms_carrier"]  = self.carrier.value.strip().lower()
-        cfg["sms_gmail"]    = self.gmail.value.strip()
-        cfg["sms_app_pass"] = self.app_pass.value.strip().replace(" ","")
+        cfg["sms_enabled"]   = self.enabled.value.strip().lower() == "true"
+        cfg["sms_number"]    = self.number.value.strip().replace("-","").replace(" ","").replace("+1","")
+        cfg["sms_carrier"]   = self.carrier.value.strip().lower()
+        cfg["sms_smtp_pass"] = self.smtp_pass.value.strip()
+        cfg["sms_from"]      = self.from_addr.value.strip()
         save_config(cfg)
-        status = "✅ SMS enabled" if cfg["sms_enabled"] else "⛔ SMS disabled"
+        status  = "✅ SMS enabled" if cfg["sms_enabled"] else "⛔ SMS disabled"
         gateway = CARRIER_GATEWAYS.get(cfg["sms_carrier"], "@vtext.com")
         await interaction.response.send_message(
             f"{status}\n"
             f"→ `{cfg['sms_number']}{gateway}`\n"
-            f"Events: {', '.join(cfg.get('sms_events', []))}\n"
-            f"⚠️ Make sure you have a Gmail App Password — not your real password.",
+            f"From: `{cfg['sms_from']}`\n"
+            f"Events: {', '.join(cfg.get('sms_events', []))}",
             ephemeral=True,
         )
 
