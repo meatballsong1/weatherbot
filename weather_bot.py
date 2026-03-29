@@ -308,7 +308,7 @@ async def send_sms_alert(event: str, headline: str, areas: str):
                     s.login(smtp_user, smtp_pass)
                     s.send_message(msg)
             await loop.run_in_executor(None, _send)
-            log.info(f"SMS sent via SMTP to {to_addr}: {event}")
+            log.info(f"SMS sent via SMTP to {all_to}: {event}")
         except Exception as e:
             log.warning(f"SMS SMTP failed: {e}")
 
@@ -1341,7 +1341,7 @@ async def cmd_testsms(interaction: discord.Interaction):
                     resp_text = await r.text()
                     if r.status in (200, 201):
                         await interaction.followup.send(
-                            f"✅ Sent via API to `{to_addr}`\n"
+                            f"✅ Sent via API to `{', '.join(all_to)}`\n"
                             f"Response: `{resp_text[:200]}`",
                             ephemeral=True,
                         )
@@ -1374,7 +1374,7 @@ async def cmd_testsms(interaction: discord.Interaction):
                     s.login(smtp_user, smtp_pass)
                     s.send_message(msg)
             await loop.run_in_executor(None, _send)
-            await interaction.followup.send(f"✅ Sent via SMTP to `{to_addr}`", ephemeral=True)
+            await interaction.followup.send(f"✅ Sent via SMTP to `{', '.join(all_to)}`", ephemeral=True)
         except Exception as e:
             await interaction.followup.send(f"❌ SMTP Exception: `{e}`", ephemeral=True)
 
