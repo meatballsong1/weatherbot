@@ -1185,6 +1185,104 @@ async def cmd_hwo(interaction: discord.Interaction):
     emb = build_product_embed(products[0], "HWO")
     await interaction.followup.send(embed=emb)
 
+@tree.command(name="testsms", description="Test SMS delivery to your configured number")
+@app_commands.checks.has_permissions(manage_guild=True)
+async def cmd_testsms(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+
+    number  = cfg.get("sms_number", "").strip().replace("-","").replace(" ","").replace("+1","")
+    carrier = cfg.get("sms_carrier", "verizon").lower()
+    method  = cfg.get("sms_method", "api")
+    gateway = CARRIER_GATEWAYS.get(carrier, "@vtext.com")
+    to_addr = f"{number}{gateway}"
+    api_key = cfg.get("sms_api_key", "") or os.getenv("BREVO_API_KEY", "")
+    smtp_pass = cfg.get("sms_smtp_pass", "") or os.getenv("BREVO_SMTP_KEY", "")
+
+    if not number:
+        await interaction.followup.send("❌ No phone number set — use `/settings` → 📱 SMS", ephemeral=True)
+        return
+
+    # Show config state before trying
+    status_lines = [
+        f"**Number:** `{number}`",
+        f"**Carrier gateway:** `{to_addr}`",
+        f"**Method:** `{method}`",
+        f"**API key:** {'✅ set' if api_key else '❌ missing'}",
+        f"**SMTP key:** {'✅ set' if smtp_pass else '❌ missing'}",
+        f"**SMS enabled:** `{cfg.get('sms_enabled', False)}`",
+        "",
+        "Sending test message now…",
+    ]
+    await interaction.followup.send("\n".join(status_lines), ephemeral=True)
+
+    # Force send regardless of sms_enabled flag
+    from_addr = cfg.get("sms_from", "weather@oofbomb.xyz")
+    from_name = cfg.get("sms_from_name", "weather bot")
+    body      = "weather bot test — if you got this, SMS is working!"
+    subject   = "weather bot test"
+
+    if method == "api":
+        if not api_key:
+            await interaction.followup.send("❌ No Brevo API key. Add `BREVO_API_KEY` to `.env`", ephemeral=True)
+            return
+        payload = {
+            "sender":      {"name": from_name, "email": from_addr},
+            "to":          [{"email": to_addr}],
+            "subject":     subject,
+            "textContent": body,
+        }
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    "https://api.brevo.com/v3/smtp/email",
+                    json=payload,
+                    headers={
+                        "accept":       "application/json",
+                        "content-type": "application/json",
+                        "api-key":      api_key,
+                    },
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as r:
+                    resp_text = await r.text()
+                    if r.status in (200, 201):
+                        await interaction.followup.send(
+                            f"✅ Sent via API to `{to_addr}`\n"
+                            f"Response: `{resp_text[:200]}`",
+                            ephemeral=True,
+                        )
+                    else:
+                        await interaction.followup.send(
+                            f"❌ API error `{r.status}`:\n```{resp_text[:400]}```",
+                            ephemeral=True,
+                        )
+        except Exception as e:
+            await interaction.followup.send(f"❌ Exception: `{e}`", ephemeral=True)
+
+    else:
+        if not smtp_pass:
+            await interaction.followup.send("❌ No SMTP key. Add `BREVO_SMTP_KEY` to `.env`", ephemeral=True)
+            return
+        try:
+            import smtplib
+            from email.mime.text import MIMEText
+            smtp_host = cfg.get("sms_smtp_host", "smtp-relay.brevo.com")
+            smtp_port = int(cfg.get("sms_smtp_port", 587))
+            smtp_user = cfg.get("sms_smtp_user", "a664fc001@smtp-brevo.com")
+            msg            = MIMEText(body)
+            msg["From"]    = f"{from_name} <{from_addr}>"
+            msg["To"]      = to_addr
+            msg["Subject"] = subject
+            loop = asyncio.get_event_loop()
+            def _send():
+                with smtplib.SMTP(smtp_host, smtp_port) as s:
+                    s.starttls()
+                    s.login(smtp_user, smtp_pass)
+                    s.send_message(msg)
+            await loop.run_in_executor(None, _send)
+            await interaction.followup.send(f"✅ Sent via SMTP to `{to_addr}`", ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f"❌ SMTP Exception: `{e}`", ephemeral=True)
+
 @tree.command(name="poll", description="[Admin] Force an immediate alert poll")
 @app_commands.checks.has_permissions(manage_guild=True)
 async def cmd_poll(interaction: discord.Interaction):
