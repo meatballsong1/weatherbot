@@ -132,6 +132,21 @@ DEFAULT_CONFIG = {
     # e.g. ["friend@gmail.com", "5551234567@tmomail.net"]
     "extra_recipients": [],
 
+    # ntfy.sh push notifications
+    "ntfy_enabled":  False,
+    "ntfy_topic":    "ne_weatheralertsoofbomb",
+    "ntfy_server":   "https://ntfy.sh",   # self-host or use ntfy.sh
+    "ntfy_token":    "",                  # optional — for private topics
+    "ntfy_events":   [
+        "Tornado Emergency",
+        "Tornado Warning",
+        "Tornado Watch",
+        "Severe Thunderstorm Warning",
+        "Severe Thunderstorm Watch",
+        "Flash Flood Emergency",
+        "Red Flag Warning",
+    ],
+
     # SMS alerts via email-to-carrier gateway
     "sms_enabled":    False,
     "sms_number":     "4027180244",
@@ -154,6 +169,21 @@ DEFAULT_CONFIG = {
     # Additional recipients — can be emails or carrier gateways
     # e.g. ["friend@gmail.com", "5551234567@tmomail.net"]
     "extra_recipients": [],
+
+    # ntfy.sh push notifications
+    "ntfy_enabled":  False,
+    "ntfy_topic":    "ne_weatheralertsoofbomb",
+    "ntfy_server":   "https://ntfy.sh",   # self-host or use ntfy.sh
+    "ntfy_token":    "",                  # optional — for private topics
+    "ntfy_events":   [
+        "Tornado Emergency",
+        "Tornado Warning",
+        "Tornado Watch",
+        "Severe Thunderstorm Warning",
+        "Severe Thunderstorm Watch",
+        "Flash Flood Emergency",
+        "Red Flag Warning",
+    ],
 
     # Seen tracking
     "_seen_alerts":   [],
@@ -311,6 +341,73 @@ async def send_sms_alert(event: str, headline: str, areas: str):
             log.info(f"SMS sent via SMTP to {all_to}: {event}")
         except Exception as e:
             log.warning(f"SMS SMTP failed: {e}")
+
+async def send_ntfy_alert(event: str, headline: str, areas: str, urgency: str = ""):
+    """Send push notification via ntfy.sh."""
+    if not cfg.get("ntfy_enabled"):
+        return
+    if event not in cfg.get("ntfy_events", []):
+        return
+
+    server = cfg.get("ntfy_server", "https://ntfy.sh").rstrip("/")
+    topic  = cfg.get("ntfy_topic",  "ne_weatheralertsoofbomb")
+    token  = cfg.get("ntfy_token",  "")
+
+    # Priority based on severity
+    priority_map = {
+        "Tornado Emergency":           "max",
+        "Tornado Warning":             "max",
+        "Flash Flood Emergency":       "max",
+        "Tornado Watch":               "high",
+        "Severe Thunderstorm Warning": "high",
+        "Flash Flood Warning":         "high",
+        "Severe Thunderstorm Watch":   "high",
+        "Red Flag Warning":            "high",
+        "Fire Weather Watch":          "default",
+    }
+    priority = priority_map.get(event, "default")
+
+    # Emoji tag
+    emoji_map = {
+        "Tornado Emergency":           "rotating_light",
+        "Tornado Warning":             "tornado",
+        "Tornado Watch":               "warning",
+        "Severe Thunderstorm Warning": "thunder_cloud_and_rain",
+        "Severe Thunderstorm Watch":   "cloud_with_lightning",
+        "Flash Flood Emergency":       "rotating_light",
+        "Flash Flood Warning":         "ocean",
+        "Red Flag Warning":            "fire",
+        "Fire Weather Watch":          "fire",
+        "Winter Storm Warning":        "snowflake",
+        "Blizzard Warning":            "snowflake",
+    }
+    tag = emoji_map.get(event, "warning")
+
+    headers = {
+        "Title":    event,
+        "Priority": priority,
+        "Tags":     tag,
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    body = f"{headline}\n\n{areas[:200]}" if areas else headline
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{server}/{topic}",
+                data=body.encode("utf-8"),
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=8),
+            ) as r:
+                if r.status in (200, 201):
+                    log.info(f"ntfy sent: {event} → {server}/{topic} (priority={priority})")
+                else:
+                    txt = await r.text()
+                    log.warning(f"ntfy error {r.status}: {txt}")
+    except Exception as e:
+        log.warning(f"ntfy failed: {e}")
 
 # ── Config helpers ────────────────────────────────────────────────────────────
 def load_config() -> dict:
@@ -627,11 +724,17 @@ async def check_alerts(session: aiohttp.ClientSession):
 
         log.info(f"New alert: {event} ({aid})")
 
-        # Send SMS for configured events
+        # Send SMS + ntfy for configured events
         asyncio.create_task(send_sms_alert(
             event,
             props.get("headline", event),
             props.get("areaDesc", ""),
+        ))
+        asyncio.create_task(send_ntfy_alert(
+            event,
+            props.get("headline", event),
+            props.get("areaDesc", ""),
+            props.get("urgency", ""),
         ))
 
         emb = build_alert_embed(alert)
@@ -786,6 +889,19 @@ class SettingsView(discord.ui.View):
             inline=True,
         )
 
+        # ntfy
+        ntfy_on  = cfg.get("ntfy_enabled", False)
+        ntfy_url = f"{cfg.get('ntfy_server','https://ntfy.sh')}/{cfg.get('ntfy_topic','')}"
+        emb.add_field(
+            name="🔔 ntfy Push Notifications",
+            value=(
+                f"**Status:** {'✅ Enabled' if ntfy_on else '⛔ Disabled'}\n"
+                f"**Topic:** `{cfg.get('ntfy_topic','not set')}`\n"
+                f"**URL:** `{ntfy_url}`"
+            ),
+            inline=False,
+        )
+
         # SMS
         sms_on = cfg.get("sms_enabled", False)
         carrier = cfg.get("sms_carrier","verizon")
@@ -845,6 +961,10 @@ class SettingsView(discord.ui.View):
     async def btn_recipients(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(RecipientsModal())
 
+    @discord.ui.button(label="🔔 ntfy", style=discord.ButtonStyle.primary, row=2)
+    async def btn_ntfy(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(NtfyModal())
+
     @discord.ui.button(label="📱 SMS Alerts", style=discord.ButtonStyle.secondary, row=2)
     async def btn_sms(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(SmsModal())
@@ -852,6 +972,10 @@ class SettingsView(discord.ui.View):
     @discord.ui.button(label="📧 Recipients", style=discord.ButtonStyle.secondary, row=2)
     async def btn_recipients(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(RecipientsModal())
+
+    @discord.ui.button(label="🔔 ntfy", style=discord.ButtonStyle.primary, row=2)
+    async def btn_ntfy(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(NtfyModal())
 
     @discord.ui.button(label="🔄 Reset Seen", style=discord.ButtonStyle.danger, row=1)
     async def btn_reset(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -970,6 +1094,42 @@ class BehaviorModal(discord.ui.Modal, title="Behavior Settings"):
         save_config(cfg)
         await interaction.response.send_message("✅ Behavior settings saved.", ephemeral=True)
 
+class NtfyModal(discord.ui.Modal, title="ntfy Push Notifications"):
+    enabled = discord.ui.TextInput(label="Enable ntfy? (true/false)", placeholder="false")
+    topic   = discord.ui.TextInput(label="ntfy topic", placeholder="ne_weatheralertsoofbomb")
+    server  = discord.ui.TextInput(label="ntfy server", placeholder="https://ntfy.sh")
+    token   = discord.ui.TextInput(label="Access token (leave blank if public)", required=False)
+    events  = discord.ui.TextInput(
+        label="Alert events to notify (comma-separated)",
+        placeholder="Tornado Emergency, Tornado Warning",
+        style=discord.TextStyle.paragraph,
+    )
+
+    def __init__(self):
+        super().__init__()
+        self.enabled.default = str(cfg.get("ntfy_enabled", False)).lower()
+        self.topic.default   = cfg.get("ntfy_topic",  "ne_weatheralertsoofbomb")
+        self.server.default  = cfg.get("ntfy_server", "https://ntfy.sh")
+        self.token.default   = cfg.get("ntfy_token",  "")
+        self.events.default  = ", ".join(cfg.get("ntfy_events", []))
+
+    async def on_submit(self, interaction: discord.Interaction):
+        cfg["ntfy_enabled"] = self.enabled.value.strip().lower() == "true"
+        cfg["ntfy_topic"]   = self.topic.value.strip()
+        cfg["ntfy_server"]  = self.server.value.strip().rstrip("/")
+        cfg["ntfy_token"]   = self.token.value.strip()
+        cfg["ntfy_events"]  = [e.strip() for e in self.events.value.split(",") if e.strip()]
+        save_config(cfg)
+        url = f"{cfg['ntfy_server']}/{cfg['ntfy_topic']}"
+        status = "✅ ntfy enabled" if cfg["ntfy_enabled"] else "⛔ ntfy disabled"
+        await interaction.response.send_message(
+            f"{status}\n"
+            f"→ `{url}`\n"
+            f"Events: {len(cfg['ntfy_events'])} configured\n"
+            f"Install the ntfy app and subscribe to `{cfg['ntfy_topic']}`",
+            ephemeral=True,
+        )
+
 class RecipientsModal(discord.ui.Modal, title="Alert Recipients"):
     primary   = discord.ui.TextInput(
         label="Primary (number:carrier)",
@@ -1045,6 +1205,42 @@ class SmsModal(discord.ui.Modal, title="SMS Alert Settings"):
         )
 
 # ── SMS Modal ─────────────────────────────────────────────────────────────────
+class NtfyModal(discord.ui.Modal, title="ntfy Push Notifications"):
+    enabled = discord.ui.TextInput(label="Enable ntfy? (true/false)", placeholder="false")
+    topic   = discord.ui.TextInput(label="ntfy topic", placeholder="ne_weatheralertsoofbomb")
+    server  = discord.ui.TextInput(label="ntfy server", placeholder="https://ntfy.sh")
+    token   = discord.ui.TextInput(label="Access token (leave blank if public)", required=False)
+    events  = discord.ui.TextInput(
+        label="Alert events to notify (comma-separated)",
+        placeholder="Tornado Emergency, Tornado Warning",
+        style=discord.TextStyle.paragraph,
+    )
+
+    def __init__(self):
+        super().__init__()
+        self.enabled.default = str(cfg.get("ntfy_enabled", False)).lower()
+        self.topic.default   = cfg.get("ntfy_topic",  "ne_weatheralertsoofbomb")
+        self.server.default  = cfg.get("ntfy_server", "https://ntfy.sh")
+        self.token.default   = cfg.get("ntfy_token",  "")
+        self.events.default  = ", ".join(cfg.get("ntfy_events", []))
+
+    async def on_submit(self, interaction: discord.Interaction):
+        cfg["ntfy_enabled"] = self.enabled.value.strip().lower() == "true"
+        cfg["ntfy_topic"]   = self.topic.value.strip()
+        cfg["ntfy_server"]  = self.server.value.strip().rstrip("/")
+        cfg["ntfy_token"]   = self.token.value.strip()
+        cfg["ntfy_events"]  = [e.strip() for e in self.events.value.split(",") if e.strip()]
+        save_config(cfg)
+        url = f"{cfg['ntfy_server']}/{cfg['ntfy_topic']}"
+        status = "✅ ntfy enabled" if cfg["ntfy_enabled"] else "⛔ ntfy disabled"
+        await interaction.response.send_message(
+            f"{status}\n"
+            f"→ `{url}`\n"
+            f"Events: {len(cfg['ntfy_events'])} configured\n"
+            f"Install the ntfy app and subscribe to `{cfg['ntfy_topic']}`",
+            ephemeral=True,
+        )
+
 class RecipientsModal(discord.ui.Modal, title="Alert Recipients"):
     primary   = discord.ui.TextInput(
         label="Primary (number:carrier)",
@@ -1377,6 +1573,46 @@ async def cmd_testsms(interaction: discord.Interaction):
             await interaction.followup.send(f"✅ Sent via SMTP to `{', '.join(all_to)}`", ephemeral=True)
         except Exception as e:
             await interaction.followup.send(f"❌ SMTP Exception: `{e}`", ephemeral=True)
+
+@tree.command(name="testntfy", description="Send a test ntfy push notification")
+@app_commands.checks.has_permissions(manage_guild=True)
+async def cmd_testntfy(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    server = cfg.get("ntfy_server", "https://ntfy.sh").rstrip("/")
+    topic  = cfg.get("ntfy_topic",  "ne_weatheralertsoofbomb")
+    token  = cfg.get("ntfy_token",  "")
+    url    = f"{server}/{topic}"
+
+    headers = {
+        "Title":    "weather bot test",
+        "Priority": "high",
+        "Tags":     "white_check_mark",
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                url,
+                data=b"ntfy is working! you will receive real weather alerts here.",
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=8),
+            ) as r:
+                txt = await r.text()
+                if r.status in (200, 201):
+                    await interaction.followup.send(
+                        f"✅ ntfy test sent to `{url}`\n"
+                        f"Check the ntfy app — subscribe to `{topic}` if you haven't.",
+                        ephemeral=True,
+                    )
+                else:
+                    await interaction.followup.send(
+                        f"❌ ntfy error `{r.status}`:\n```{txt[:300]}```",
+                        ephemeral=True,
+                    )
+    except Exception as e:
+        await interaction.followup.send(f"❌ Exception: `{e}`", ephemeral=True)
 
 @tree.command(name="poll", description="[Admin] Force an immediate alert poll")
 @app_commands.checks.has_permissions(manage_guild=True)
