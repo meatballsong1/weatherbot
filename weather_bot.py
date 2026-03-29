@@ -134,7 +134,7 @@ DEFAULT_CONFIG = {
 
     # ntfy.sh push notifications
     "ntfy_enabled":  False,
-    "ntfy_topic":    "ne_weatheralertsoofbomb",
+    "ntfy_topic":    "ne-nebraskaweather",
     "ntfy_server":   "https://ntfy.sh",   # self-host or use ntfy.sh
     "ntfy_token":    "",                  # optional — for private topics
     "ntfy_events":   [
@@ -172,7 +172,7 @@ DEFAULT_CONFIG = {
 
     # ntfy.sh push notifications
     "ntfy_enabled":  False,
-    "ntfy_topic":    "ne_weatheralertsoofbomb",
+    "ntfy_topic":    "ne-nebraskaweather",
     "ntfy_server":   "https://ntfy.sh",   # self-host or use ntfy.sh
     "ntfy_token":    "",                  # optional — for private topics
     "ntfy_events":   [
@@ -343,17 +343,16 @@ async def send_sms_alert(event: str, headline: str, areas: str):
             log.warning(f"SMS SMTP failed: {e}")
 
 async def send_ntfy_alert(event: str, headline: str, areas: str, urgency: str = ""):
-    """Send push notification via ntfy.sh."""
+    """Send clean push notification via ntfy.sh with markdown formatting."""
     if not cfg.get("ntfy_enabled"):
         return
     if event not in cfg.get("ntfy_events", []):
         return
 
     server = cfg.get("ntfy_server", "https://ntfy.sh").rstrip("/")
-    topic  = cfg.get("ntfy_topic",  "ne_weatheralertsoofbomb")
+    topic  = cfg.get("ntfy_topic",  "ne-nebraskaweather")
     token  = cfg.get("ntfy_token",  "")
 
-    # Priority based on severity
     priority_map = {
         "Tornado Emergency":           "max",
         "Tornado Warning":             "max",
@@ -367,8 +366,7 @@ async def send_ntfy_alert(event: str, headline: str, areas: str, urgency: str = 
     }
     priority = priority_map.get(event, "default")
 
-    # Emoji tag
-    emoji_map = {
+    tag_map = {
         "Tornado Emergency":           "rotating_light",
         "Tornado Warning":             "tornado",
         "Tornado Watch":               "warning",
@@ -380,18 +378,38 @@ async def send_ntfy_alert(event: str, headline: str, areas: str, urgency: str = 
         "Fire Weather Watch":          "fire",
         "Winter Storm Warning":        "snowflake",
         "Blizzard Warning":            "snowflake",
+        "Special Weather Statement":   "clipboard",
     }
-    tag = emoji_map.get(event, "warning")
+    tag = tag_map.get(event, "warning")
+
+    icon_map = {
+        "Tornado Emergency":           "🚨",
+        "Tornado Warning":             "🌪️",
+        "Tornado Watch":               "⚠️",
+        "Severe Thunderstorm Warning": "⛈️",
+        "Severe Thunderstorm Watch":   "🌩️",
+        "Flash Flood Emergency":       "🚨",
+        "Flash Flood Warning":         "🌊",
+        "Red Flag Warning":            "🔥",
+    }
+    icon = icon_map.get(event, "⚠️")
+
+    # Clean markdown body
+    lines = [f"{icon} **{headline}**" if headline else f"{icon} **{event}**"]
+    if areas:
+        lines.append(f"\n📍 {areas[:180]}")
+    lines.append(f"\n— weather bot")
+    body = "\n".join(lines)
 
     headers = {
-        "Title":    event,
-        "Priority": priority,
-        "Tags":     tag,
+        "Title":           event,
+        "Priority":        priority,
+        "Tags":            tag,
+        "Markdown":        "yes",
+        "Content-Type":    "text/plain",
     }
     if token:
         headers["Authorization"] = f"Bearer {token}"
-
-    body = f"{headline}\n\n{areas[:200]}" if areas else headline
 
     try:
         async with aiohttp.ClientSession() as session:
@@ -1096,7 +1114,7 @@ class BehaviorModal(discord.ui.Modal, title="Behavior Settings"):
 
 class NtfyModal(discord.ui.Modal, title="ntfy Push Notifications"):
     enabled = discord.ui.TextInput(label="Enable ntfy? (true/false)", placeholder="false")
-    topic   = discord.ui.TextInput(label="ntfy topic", placeholder="ne_weatheralertsoofbomb")
+    topic   = discord.ui.TextInput(label="ntfy topic", placeholder="ne-nebraskaweather")
     server  = discord.ui.TextInput(label="ntfy server", placeholder="https://ntfy.sh")
     token   = discord.ui.TextInput(label="Access token (leave blank if public)", required=False)
     events  = discord.ui.TextInput(
@@ -1108,7 +1126,7 @@ class NtfyModal(discord.ui.Modal, title="ntfy Push Notifications"):
     def __init__(self):
         super().__init__()
         self.enabled.default = str(cfg.get("ntfy_enabled", False)).lower()
-        self.topic.default   = cfg.get("ntfy_topic",  "ne_weatheralertsoofbomb")
+        self.topic.default   = cfg.get("ntfy_topic",  "ne-nebraskaweather")
         self.server.default  = cfg.get("ntfy_server", "https://ntfy.sh")
         self.token.default   = cfg.get("ntfy_token",  "")
         self.events.default  = ", ".join(cfg.get("ntfy_events", []))
@@ -1207,7 +1225,7 @@ class SmsModal(discord.ui.Modal, title="SMS Alert Settings"):
 # ── SMS Modal ─────────────────────────────────────────────────────────────────
 class NtfyModal(discord.ui.Modal, title="ntfy Push Notifications"):
     enabled = discord.ui.TextInput(label="Enable ntfy? (true/false)", placeholder="false")
-    topic   = discord.ui.TextInput(label="ntfy topic", placeholder="ne_weatheralertsoofbomb")
+    topic   = discord.ui.TextInput(label="ntfy topic", placeholder="ne-nebraskaweather")
     server  = discord.ui.TextInput(label="ntfy server", placeholder="https://ntfy.sh")
     token   = discord.ui.TextInput(label="Access token (leave blank if public)", required=False)
     events  = discord.ui.TextInput(
@@ -1219,7 +1237,7 @@ class NtfyModal(discord.ui.Modal, title="ntfy Push Notifications"):
     def __init__(self):
         super().__init__()
         self.enabled.default = str(cfg.get("ntfy_enabled", False)).lower()
-        self.topic.default   = cfg.get("ntfy_topic",  "ne_weatheralertsoofbomb")
+        self.topic.default   = cfg.get("ntfy_topic",  "ne-nebraskaweather")
         self.server.default  = cfg.get("ntfy_server", "https://ntfy.sh")
         self.token.default   = cfg.get("ntfy_token",  "")
         self.events.default  = ", ".join(cfg.get("ntfy_events", []))
@@ -1579,7 +1597,7 @@ async def cmd_testsms(interaction: discord.Interaction):
 async def cmd_testntfy(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     server = cfg.get("ntfy_server", "https://ntfy.sh").rstrip("/")
-    topic  = cfg.get("ntfy_topic",  "ne_weatheralertsoofbomb")
+    topic  = cfg.get("ntfy_topic",  "ne-nebraskaweather")
     token  = cfg.get("ntfy_token",  "")
     url    = f"{server}/{topic}"
 
@@ -1587,6 +1605,7 @@ async def cmd_testntfy(interaction: discord.Interaction):
         "Title":    "weather bot test",
         "Priority": "high",
         "Tags":     "white_check_mark",
+        "Markdown":  "yes",
     }
     if token:
         headers["Authorization"] = f"Bearer {token}"
@@ -1595,7 +1614,7 @@ async def cmd_testntfy(interaction: discord.Interaction):
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 url,
-                data=b"ntfy is working! you will receive real weather alerts here.",
+                data="⚠️ **weather bot is working**\n\nYou'll receive real weather alerts here.\n\n— weather bot".encode("utf-8"),
                 headers=headers,
                 timeout=aiohttp.ClientTimeout(total=8),
             ) as r:
