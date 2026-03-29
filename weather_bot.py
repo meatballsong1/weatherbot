@@ -134,10 +134,13 @@ DEFAULT_CONFIG = {
     "sms_number":     "4027180244",
     "sms_carrier":    "verizon",       # verizon | att | tmobile | sprint
     "sms_from":       "weather@oofbomb.xyz",
+    "sms_from_name":  "weather bot",
+    "sms_method":     "api",           # "api" (default) or "smtp"
+    "sms_api_key":    "",              # Brevo API key — set via .env BREVO_API_KEY
     "sms_smtp_host":  "smtp-relay.brevo.com",
     "sms_smtp_port":  587,
     "sms_smtp_user":  "a664fc001@smtp-brevo.com",
-    "sms_smtp_pass":  "",              # set via /settings SMS or .env BREVO_SMTP_KEY
+    "sms_smtp_pass":  "",              # set via .env BREVO_SMTP_KEY
     "sms_events": [
         "Tornado Emergency",
         "Tornado Warning",
@@ -150,9 +153,12 @@ DEFAULT_CONFIG = {
     "_seen_alerts":   [],
     "_seen_products": [],
 }
-# Inject Brevo key from env if not already set in config
+# Inject Brevo keys from env
+_brevo_api_key = os.getenv("BREVO_API_KEY", "")
 if _brevo_key:
     DEFAULT_CONFIG["sms_smtp_pass"] = _brevo_key
+if _brevo_api_key:
+    DEFAULT_CONFIG["sms_api_key"] = _brevo_api_key
 
 # ── Severity colors ───────────────────────────────────────────────────────────
 SEVERITY_COLORS = {
@@ -218,7 +224,7 @@ CARRIER_GATEWAYS = {
 }
 
 async def send_sms_alert(event: str, headline: str, areas: str):
-    """Send SMS via email-to-carrier gateway using Brevo SMTP."""
+    """Send SMS via email-to-carrier gateway using Brevo API (default) or SMTP."""
     if not cfg.get("sms_enabled"):
         return
     if event not in cfg.get("sms_events", []):
@@ -226,39 +232,77 @@ async def send_sms_alert(event: str, headline: str, areas: str):
 
     number    = cfg.get("sms_number", "").strip().replace("-","").replace(" ","").replace("+1","")
     carrier   = cfg.get("sms_carrier", "verizon").lower()
-    smtp_host = cfg.get("sms_smtp_host", "smtp-relay.brevo.com")
-    smtp_port = int(cfg.get("sms_smtp_port", 587))
-    smtp_user = cfg.get("sms_smtp_user", "a664fc001@smtp-brevo.com")
-    smtp_pass = cfg.get("sms_smtp_pass", "") or os.getenv("BREVO_SMTP_KEY", "")
     from_addr = cfg.get("sms_from", "weather@oofbomb.xyz")
+    from_name = cfg.get("sms_from_name", "weather bot")
+    method    = cfg.get("sms_method", "api")
 
-    if not smtp_pass or not number:
-        log.warning("SMS: missing smtp_pass or number in config")
+    if not number:
+        log.warning("SMS: no phone number configured")
         return
 
     gateway = CARRIER_GATEWAYS.get(carrier, "@vtext.com")
     to_addr = f"{number}{gateway}"
+    subject = event[:50]
     body    = f"{event}\n{headline[:80]}\n{areas[:60]}"
 
-    try:
-        import smtplib
-        from email.mime.text import MIMEText
-        msg = MIMEText(body)
-        msg["From"]    = from_addr
-        msg["To"]      = to_addr
-        msg["Subject"] = event[:50]
+    if method == "api":
+        # ── Brevo API (default) ──────────────────────────────────────────────
+        api_key = cfg.get("sms_api_key", "") or os.getenv("BREVO_API_KEY", "")
+        if not api_key:
+            log.warning("SMS: no Brevo API key — set BREVO_API_KEY in .env or /settings SMS")
+            return
+        payload = {
+            "sender":      {"name": from_name, "email": from_addr},
+            "to":          [{"email": to_addr}],
+            "subject":     subject,
+            "textContent": body,
+        }
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    "https://api.brevo.com/v3/smtp/email",
+                    json=payload,
+                    headers={
+                        "accept":       "application/json",
+                        "content-type": "application/json",
+                        "api-key":      api_key,
+                    },
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as r:
+                    if r.status in (200, 201):
+                        log.info(f"SMS sent via Brevo API to {to_addr}: {event}")
+                    else:
+                        txt = await r.text()
+                        log.warning(f"SMS Brevo API error {r.status}: {txt}")
+        except Exception as e:
+            log.warning(f"SMS API failed: {e}")
 
-        loop = asyncio.get_event_loop()
-        def _send():
-            with smtplib.SMTP(smtp_host, smtp_port) as s:
-                s.starttls()
-                s.login(smtp_user, smtp_pass)
-                s.send_message(msg)
-
-        await loop.run_in_executor(None, _send)
-        log.info(f"SMS sent to {to_addr} via {smtp_host}: {event}")
-    except Exception as e:
-        log.warning(f"SMS failed: {e}")
+    else:
+        # ── SMTP fallback ────────────────────────────────────────────────────
+        smtp_host = cfg.get("sms_smtp_host", "smtp-relay.brevo.com")
+        smtp_port = int(cfg.get("sms_smtp_port", 587))
+        smtp_user = cfg.get("sms_smtp_user", "a664fc001@smtp-brevo.com")
+        smtp_pass = cfg.get("sms_smtp_pass", "") or os.getenv("BREVO_SMTP_KEY", "")
+        if not smtp_pass:
+            log.warning("SMS: no SMTP key — set BREVO_SMTP_KEY in .env or /settings SMS")
+            return
+        try:
+            import smtplib
+            from email.mime.text import MIMEText
+            msg            = MIMEText(body)
+            msg["From"]    = f"{from_name} <{from_addr}>"
+            msg["To"]      = to_addr
+            msg["Subject"] = subject
+            loop = asyncio.get_event_loop()
+            def _send():
+                with smtplib.SMTP(smtp_host, smtp_port) as s:
+                    s.starttls()
+                    s.login(smtp_user, smtp_pass)
+                    s.send_message(msg)
+            await loop.run_in_executor(None, _send)
+            log.info(f"SMS sent via SMTP to {to_addr}: {event}")
+        except Exception as e:
+            log.warning(f"SMS SMTP failed: {e}")
 
 # ── Config helpers ────────────────────────────────────────────────────────────
 def load_config() -> dict:
@@ -950,7 +994,7 @@ class SmsModal(discord.ui.Modal, title="SMS Alert Settings"):
     enabled   = discord.ui.TextInput(label="Enable SMS? (true/false)", placeholder="false")
     number    = discord.ui.TextInput(label="Phone number (digits only, no +1)", placeholder="4027180244")
     carrier   = discord.ui.TextInput(label="Carrier (verizon/att/tmobile/sprint/boost)", placeholder="verizon")
-    smtp_pass = discord.ui.TextInput(label="Brevo SMTP Key", placeholder="xsmtpsib-...")
+    method    = discord.ui.TextInput(label="Method: api or smtp (api recommended)", placeholder="api")
     from_addr = discord.ui.TextInput(label="From address", placeholder="weather@oofbomb.xyz")
 
     def __init__(self):
@@ -958,22 +1002,26 @@ class SmsModal(discord.ui.Modal, title="SMS Alert Settings"):
         self.enabled.default   = str(cfg.get("sms_enabled", False)).lower()
         self.number.default    = cfg.get("sms_number", "4027180244")
         self.carrier.default   = cfg.get("sms_carrier", "verizon")
-        self.smtp_pass.default = cfg.get("sms_smtp_pass", "")
+        self.method.default    = cfg.get("sms_method", "api")
         self.from_addr.default = cfg.get("sms_from", "weather@oofbomb.xyz")
 
     async def on_submit(self, interaction: discord.Interaction):
         cfg["sms_enabled"]   = self.enabled.value.strip().lower() == "true"
         cfg["sms_number"]    = self.number.value.strip().replace("-","").replace(" ","").replace("+1","")
         cfg["sms_carrier"]   = self.carrier.value.strip().lower()
-        cfg["sms_smtp_pass"] = self.smtp_pass.value.strip()
+        cfg["sms_method"]    = self.method.value.strip().lower() if self.method.value.strip().lower() in ("api","smtp") else "api"
         cfg["sms_from"]      = self.from_addr.value.strip()
         save_config(cfg)
         status  = "✅ SMS enabled" if cfg["sms_enabled"] else "⛔ SMS disabled"
         gateway = CARRIER_GATEWAYS.get(cfg["sms_carrier"], "@vtext.com")
+        api_ok  = bool(cfg.get("sms_api_key") or os.getenv("BREVO_API_KEY"))
+        smtp_ok = bool(cfg.get("sms_smtp_pass") or os.getenv("BREVO_SMTP_KEY"))
+        key_status = "✅ API key set" if api_ok else "⚠️ No API key (set BREVO_API_KEY in .env)"
         await interaction.response.send_message(
-            f"{status}\n"
+            f"{status} · method: `{cfg['sms_method']}`\n"
             f"→ `{cfg['sms_number']}{gateway}`\n"
             f"From: `{cfg['sms_from']}`\n"
+            f"Key: {key_status}\n"
             f"Events: {', '.join(cfg.get('sms_events', []))}",
             ephemeral=True,
         )
@@ -1402,4 +1450,4 @@ if __name__ == "__main__":
         print("ERROR: Set WEATHERWATCH_TOKEN in your .env file")
         print("  cp .env.example .env && edit .env")
         exit(1)
-    bot.run(BOT_TOKEN) 
+    bot.run(BOT_TOKEN)
