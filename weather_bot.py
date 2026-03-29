@@ -34,10 +34,7 @@ from discord.ext import tasks
 
 # ── Config ────────────────────────────────────────────────────────────────────
 BOT_TOKEN   = os.getenv("WEATHERWATCH_TOKEN", "")
-# Brevo SMTP key can also be set via env instead of /settings
-_brevo_key = os.getenv("BREVO_SMTP_KEY", "")
-if _brevo_key and not DEFAULT_CONFIG.get("sms_smtp_pass"):
-    DEFAULT_CONFIG["sms_smtp_pass"] = _brevo_key
+_brevo_key  = os.getenv("BREVO_SMTP_KEY", "")
 CONFIG_FILE = Path("weatherwatch_config.json")
 LOG_FILE    = Path("weatherwatch.log")
 
@@ -153,6 +150,9 @@ DEFAULT_CONFIG = {
     "_seen_alerts":   [],
     "_seen_products": [],
 }
+# Inject Brevo key from env if not already set in config
+if _brevo_key:
+    DEFAULT_CONFIG["sms_smtp_pass"] = _brevo_key
 
 # ── Severity colors ───────────────────────────────────────────────────────────
 SEVERITY_COLORS = {
@@ -1402,4 +1402,4 @@ if __name__ == "__main__":
         print("ERROR: Set WEATHERWATCH_TOKEN in your .env file")
         print("  cp .env.example .env && edit .env")
         exit(1)
-    bot.run(BOT_TOKEN)
+    bot.run(BOT_TOKEN) 
