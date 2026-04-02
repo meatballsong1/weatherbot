@@ -58,7 +58,7 @@ DEFAULT_CONFIG = {
     "alert_channel_id":     0,          # channel to post alerts
     "product_channel_id":   0,          # channel for text products (AFD, HWO, etc.)
     "ping_role_id":         0,          # role to ping for significant alerts
-    "everyone_events":      ["Tornado Emergency", "Tornado Warning", "Tornado Watch"],
+    "everyone_events":      ["Tornado Emergency", "Tornado Warning"],
 
     # Alert filters — which NWS event types to post
     "enabled_alerts": {
@@ -70,7 +70,7 @@ DEFAULT_CONFIG = {
         "Flash Flood Emergency":      True,
         "Flash Flood Warning":        True,
         "Flash Flood Watch":          True,
-        "Red Flag Warning":           True,
+        "Red Flag Warning":           False,
         "Fire Weather Watch":         True,
         "Winter Storm Warning":       True,
         "Winter Storm Watch":         True,
@@ -144,7 +144,7 @@ DEFAULT_CONFIG = {
         "Severe Thunderstorm Warning",
         "Severe Thunderstorm Watch",
         "Flash Flood Emergency",
-        "Red Flag Warning",
+  #      "Red Flag Warning",
     ],
 
     # SMS alerts via email-to-carrier gateway
